@@ -21,8 +21,10 @@ Core: **Bands** (8/16/24/32), **Low/High Freq** (filterbank range),
 **Attack/Release** (envelope tracking), **Mod Gain**, **Out Gain**, **Mix**
 (wet/dry), **Unvoiced** (`carrier_mix` — noise added to the carrier).
 
-Intelligibility / character controls (all default to **neutral/off**, so the
-stock sound is unchanged until you dial them in):
+Intelligibility / character controls. **Presence, Sibilance and Bright ship
+on** (tuned for clear vocals out of the box) — set them to 0 for the original
+"classic" character. The situational controls (Gate, Note Gate, Formant)
+default to neutral/off.
 
 | Param | Range | What it does |
 |-------|-------|--------------|
@@ -33,6 +35,6 @@ stock sound is unchanged until you dial them in):
 | **Gate** | 0–1 | Noise gate on the voice — silences room hiss/hum between words (0 = off). |
 | **Note Gate** | 0–1 | Mutes the unvoiced noise + sibilance when no carrier is present, so the effect is silent between notes (0 = off, preserves the always-on behaviour). |
 
-**Suggested starting point for clear vocals:** Presence ~0.3, Sibilance ~0.4,
-Bright ~0.3, Bands ≥ 16, and raise **Gate** until the background between words
-goes quiet.
+**Defaults** are Presence 0.3, Sibilance 0.4, Bright 0.3, Bands 16 — a good
+clear-vocal starting point. From there, raise **Gate** until the background
+between words goes quiet, and try **Formant** for character.
