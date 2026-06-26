@@ -265,12 +265,15 @@ static void* v2_create_instance(const char *module_dir, const char *config_json)
     v->carrier_mix = 0.1f;
     v->noise_seed  = 12345;
 
-    /* New controls default to neutral so the stock sound is unchanged */
+    /* Recommended defaults for clear vocals out of the box. The always-helpful
+     * controls (presence/sibilance/bright) are on; the situational ones
+     * (formant/gate/note_gate) stay neutral. Set presence/sibilance/bright to 0
+     * for the original/classic character. */
     v->formant   = 0;
-    v->presence  = 0.0f;
+    v->presence  = 0.3f;
     v->gate      = 0.0f;
-    v->bright    = 0.0f;
-    v->sibilance = 0.0f;
+    v->bright    = 0.3f;
+    v->sibilance = 0.4f;
     v->note_gate = 0.0f;
     v->gate_gain = 1.0f;
 
@@ -589,10 +592,10 @@ static int v2_get_param(void *instance, const char *key, char *buf, int buf_len)
             "{\"key\":\"output_gain\",\"name\":\"Out Gain\",\"type\":\"float\",\"min\":0,\"max\":6,\"default\":2,\"step\":0.1},"
             "{\"key\":\"mix\",\"name\":\"Mix\",\"type\":\"float\",\"min\":0,\"max\":1,\"default\":1,\"step\":0.01},"
             "{\"key\":\"carrier_mix\",\"name\":\"Unvoiced\",\"type\":\"float\",\"min\":0,\"max\":1,\"default\":0.1,\"step\":0.01},"
-            "{\"key\":\"sibilance\",\"name\":\"Sibilance\",\"type\":\"float\",\"min\":0,\"max\":1,\"default\":0,\"step\":0.05},"
-            "{\"key\":\"presence\",\"name\":\"Presence\",\"type\":\"float\",\"min\":0,\"max\":1,\"default\":0,\"step\":0.05},"
+            "{\"key\":\"sibilance\",\"name\":\"Sibilance\",\"type\":\"float\",\"min\":0,\"max\":1,\"default\":0.4,\"step\":0.05},"
+            "{\"key\":\"presence\",\"name\":\"Presence\",\"type\":\"float\",\"min\":0,\"max\":1,\"default\":0.3,\"step\":0.05},"
             "{\"key\":\"gate\",\"name\":\"Gate\",\"type\":\"float\",\"min\":0,\"max\":1,\"default\":0,\"step\":0.05},"
-            "{\"key\":\"bright\",\"name\":\"Bright\",\"type\":\"float\",\"min\":0,\"max\":1,\"default\":0,\"step\":0.05},"
+            "{\"key\":\"bright\",\"name\":\"Bright\",\"type\":\"float\",\"min\":0,\"max\":1,\"default\":0.3,\"step\":0.05},"
             "{\"key\":\"formant\",\"name\":\"Formant\",\"type\":\"int\",\"min\":-12,\"max\":12,\"default\":0,\"step\":1},"
             "{\"key\":\"note_gate\",\"name\":\"Note Gate\",\"type\":\"float\",\"min\":0,\"max\":1,\"default\":0,\"step\":0.05}"
         "]";
