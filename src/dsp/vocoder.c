@@ -81,11 +81,24 @@ typedef struct {
     float  mix;           /* 0..1 wet/dry */
     float  carrier_mix;   /* 0..1 noise for unvoiced */
 
+    /* Intelligibility / character controls (all default to neutral/off, so the
+     * stock sound is unchanged until you dial them in). */
+    int    formant;       /* synthesis band shift, -12..12 (spectral shift)   */
+    float  presence;      /* 0..1 modulator HF pre-emphasis (clearer consonants) */
+    float  gate;          /* 0..1 modulator noise gate, 0 = off               */
+    float  bright;        /* 0..1 carrier HF emphasis                         */
+    float  sibilance;     /* 0..1 pass the voice's real highs through         */
+    float  note_gate;     /* 0..1 mute unvoiced noise + sibilance between notes */
+
     /* Derived per-band coefficients */
     float  band_f[MAX_BANDS];  /* SVF frequency coeff */
     float  band_q[MAX_BANDS];  /* SVF reciprocal-Q */
     float  att_coeff;          /* envelope attack */
     float  rel_coeff;          /* envelope release */
+
+    /* Derived one-pole coefficients for the new conditioning stages */
+    float  pre_coef, sib_coef, bright_coef;
+    float  gate_env_coef, gate_atk_coef, gate_rel_coef, car_gate_coef;
 
     /* Filter states (modulator + carrier, stereo) */
     svf_state_t mod_svf_l[MAX_BANDS];
@@ -97,6 +110,13 @@ typedef struct {
 
     /* Simple noise state for unvoiced */
     uint32_t noise_seed;
+
+    /* Conditioning / excitation state */
+    float  pre_lp_l, pre_lp_r;     /* presence pre-emphasis */
+    float  sib_lp_l, sib_lp_r;     /* sibilance high-pass    */
+    float  car_lp_l, car_lp_r;     /* carrier brighten       */
+    float  gate_env, gate_gain;    /* modulator noise gate   */
+    float  car_level;              /* carrier-presence follower (note gate) */
 } vocoder_instance_t;
 
 static const host_api_v1_t *g_host = NULL;
@@ -147,6 +167,16 @@ static void recalc_bands(vocoder_instance_t *v) {
     if (rel_ms < 0.1f) rel_ms = 0.1f;
     v->att_coeff = 1.0f - expf(-1.0f / (att_ms * 0.001f * (float)SAMPLE_RATE));
     v->rel_coeff = 1.0f - expf(-1.0f / (rel_ms * 0.001f * (float)SAMPLE_RATE));
+
+    /* Fixed one-pole corners for the conditioning stages (sample-rate only) */
+    const float sr = (float)SAMPLE_RATE;
+    v->pre_coef    = 1.0f - expf(-2.0f * (float)M_PI * 2000.0f / sr);  /* presence  */
+    v->sib_coef    = 1.0f - expf(-2.0f * (float)M_PI * 4000.0f / sr);  /* sibilance HP */
+    v->bright_coef = 1.0f - expf(-2.0f * (float)M_PI * 1500.0f / sr);  /* carrier brighten */
+    v->gate_env_coef = 1.0f - expf(-1.0f / (0.005f * sr));
+    v->gate_atk_coef = 1.0f - expf(-1.0f / (0.005f * sr));
+    v->gate_rel_coef = 1.0f - expf(-1.0f / (0.080f * sr));
+    v->car_gate_coef = 1.0f - expf(-1.0f / (0.005f * sr));
 }
 
 /* Clear all filter states */
@@ -157,6 +187,12 @@ static void clear_filters(vocoder_instance_t *v) {
     memset(v->car_svf_r, 0, sizeof(v->car_svf_r));
     memset(v->mod_env_l, 0, sizeof(v->mod_env_l));
     memset(v->mod_env_r, 0, sizeof(v->mod_env_r));
+    v->pre_lp_l = v->pre_lp_r = 0.0f;
+    v->sib_lp_l = v->sib_lp_r = 0.0f;
+    v->car_lp_l = v->car_lp_r = 0.0f;
+    v->gate_env = 0.0f;
+    v->gate_gain = 1.0f;
+    v->car_level = 0.0f;
 }
 
 /* Simple JSON float extraction */
@@ -229,6 +265,15 @@ static void* v2_create_instance(const char *module_dir, const char *config_json)
     v->carrier_mix = 0.1f;
     v->noise_seed  = 12345;
 
+    /* New controls default to neutral so the stock sound is unchanged */
+    v->formant   = 0;
+    v->presence  = 0.0f;
+    v->gate      = 0.0f;
+    v->bright    = 0.0f;
+    v->sibilance = 0.0f;
+    v->note_gate = 0.0f;
+    v->gate_gain = 1.0f;
+
     recalc_bands(v);
 
     voc_log("Instance created");
@@ -258,6 +303,12 @@ static void v2_process_block(void *instance, int16_t *audio_inout, int frames) {
     float wet = v->mix;
     float dry = 1.0f - wet;
     float noise_mix = v->carrier_mix;
+    int   formant   = v->formant;
+    float presence  = v->presence;
+    float gate_amt  = v->gate;
+    float bright    = v->bright;
+    float sibilance = v->sibilance;
+    float note_gate = v->note_gate;
 
     for (int i = 0; i < frames; i++) {
         /* Convert carrier (synth output) to float */
@@ -268,38 +319,86 @@ static void v2_process_block(void *instance, int16_t *audio_inout, int frames) {
         float mod_l = mic_in[i * 2]     / 32768.0f * mod_gain;
         float mod_r = mic_in[i * 2 + 1] / 32768.0f * mod_gain;
 
-        /* Add noise to carrier for unvoiced/consonant content */
+        /* Modulator noise gate: silence room hiss/hum between words */
+        if (gate_amt > 0.0f) {
+            float lvl = 0.5f * (fabsf(mod_l) + fabsf(mod_r));
+            v->gate_env += v->gate_env_coef * (lvl - v->gate_env);
+            float tgt = (v->gate_env > gate_amt * 0.08f) ? 1.0f : 0.0f;
+            float gc = (tgt > v->gate_gain) ? v->gate_atk_coef : v->gate_rel_coef;
+            v->gate_gain += gc * (tgt - v->gate_gain);
+            mod_l *= v->gate_gain;
+            mod_r *= v->gate_gain;
+        }
+
+        /* Presence: pre-emphasise the voice's highs so consonants track */
+        if (presence > 0.0f) {
+            v->pre_lp_l += v->pre_coef * (mod_l - v->pre_lp_l);
+            v->pre_lp_r += v->pre_coef * (mod_r - v->pre_lp_r);
+            mod_l += presence * (mod_l - v->pre_lp_l);
+            mod_r += presence * (mod_r - v->pre_lp_r);
+        }
+
+        /* Note gate: how present the carrier is right now (mutes unvoiced
+         * noise + sibilance between notes when note_gate > 0) */
+        float ngate = 1.0f;
+        if (note_gate > 0.0f) {
+            float cl = 0.5f * (fabsf(car_l) + fabsf(car_r));
+            v->car_level += v->car_gate_coef * (cl - v->car_level);
+            float cg = v->car_level * 4.0f;
+            if (cg > 1.0f) cg = 1.0f;
+            ngate = (1.0f - note_gate) + note_gate * cg;
+        }
+
+        /* Brighten the carrier (lift highs to expose upper formants) */
+        float cb_l = car_l, cb_r = car_r;
+        if (bright > 0.0f) {
+            v->car_lp_l += v->bright_coef * (car_l - v->car_lp_l);
+            v->car_lp_r += v->bright_coef * (car_r - v->car_lp_r);
+            cb_l = car_l + bright * (car_l - v->car_lp_l);
+            cb_r = car_r + bright * (car_r - v->car_lp_r);
+        }
+
+        /* Excitation = brightened carrier + (note-gated) unvoiced noise */
         float ns = noise_sample(&v->noise_seed);
-        float car_noise_l = car_l + ns * noise_mix;
-        float car_noise_r = car_r + ns * noise_mix;
+        float car_noise_l = cb_l + ns * noise_mix * ngate;
+        float car_noise_r = cb_r + ns * noise_mix * ngate;
 
-        /* Accumulate vocoded output across bands */
-        float out_l = 0.0f;
-        float out_r = 0.0f;
-
+        /* Pass 1: modulator analysis -> per-band envelopes */
         for (int b = 0; b < n; b++) {
             float f = v->band_f[b];
             float q = v->band_q[b];
-
-            /* Filter modulator through bandpass → envelope */
             float mod_band_l = svf_bandpass(&v->mod_svf_l[b], mod_l, f, q);
             float mod_band_r = svf_bandpass(&v->mod_svf_r[b], mod_r, f, q);
-            float env_l = env_follow(&v->mod_env_l[b], mod_band_l, att, rel);
-            float env_r = env_follow(&v->mod_env_r[b], mod_band_r, att, rel);
+            env_follow(&v->mod_env_l[b], mod_band_l, att, rel);
+            env_follow(&v->mod_env_r[b], mod_band_r, att, rel);
+        }
 
-            /* Filter carrier through same bandpass */
+        /* Pass 2: shape the excitation by the (formant-shifted) envelopes */
+        float out_l = 0.0f;
+        float out_r = 0.0f;
+        for (int b = 0; b < n; b++) {
+            float f = v->band_f[b];
+            float q = v->band_q[b];
+            int src = clampi(b - formant, 0, n - 1);
             float car_band_l = svf_bandpass(&v->car_svf_l[b], car_noise_l, f, q);
             float car_band_r = svf_bandpass(&v->car_svf_r[b], car_noise_r, f, q);
-
-            /* Multiply carrier band by modulator envelope */
-            out_l += car_band_l * env_l;
-            out_r += car_band_r * env_r;
+            out_l += car_band_l * v->mod_env_l[src].level;
+            out_r += car_band_r * v->mod_env_r[src].level;
         }
 
         /* Scale output (more bands = more energy), apply output gain */
         float scale = 2.0f / sqrtf((float)n) * out_gain;
         out_l *= scale;
         out_r *= scale;
+
+        /* Natural sibilance: add the voice's own high-passed signal (real
+         * consonants), gated by note presence */
+        if (sibilance > 0.0f) {
+            v->sib_lp_l += v->sib_coef * (mod_l - v->sib_lp_l);
+            v->sib_lp_r += v->sib_coef * (mod_r - v->sib_lp_r);
+            out_l += sibilance * ngate * (mod_l - v->sib_lp_l) * 2.0f;
+            out_r += sibilance * ngate * (mod_r - v->sib_lp_r) * 2.0f;
+        }
 
         /* Wet/dry mix */
         float mix_l = out_l * wet + car_l * dry;
@@ -341,6 +440,18 @@ static void v2_set_param(void *instance, const char *key, const char *val) {
             v->mix = clampf(fv, 0.0f, 1.0f);
         if (json_get_float(val, "carrier_mix", &fv) == 0)
             v->carrier_mix = clampf(fv, 0.0f, 1.0f);
+        if (json_get_int(val, "formant", &iv) == 0)
+            v->formant = clampi(iv, -12, 12);
+        if (json_get_float(val, "presence", &fv) == 0)
+            v->presence = clampf(fv, 0.0f, 1.0f);
+        if (json_get_float(val, "gate", &fv) == 0)
+            v->gate = clampf(fv, 0.0f, 1.0f);
+        if (json_get_float(val, "bright", &fv) == 0)
+            v->bright = clampf(fv, 0.0f, 1.0f);
+        if (json_get_float(val, "sibilance", &fv) == 0)
+            v->sibilance = clampf(fv, 0.0f, 1.0f);
+        if (json_get_float(val, "note_gate", &fv) == 0)
+            v->note_gate = clampf(fv, 0.0f, 1.0f);
 
         clear_filters(v);
         recalc_bands(v);
@@ -376,6 +487,18 @@ static void v2_set_param(void *instance, const char *key, const char *val) {
         v->mix = clampf(fv, 0.0f, 1.0f);
     } else if (strcmp(key, "carrier_mix") == 0) {
         v->carrier_mix = clampf(fv, 0.0f, 1.0f);
+    } else if (strcmp(key, "formant") == 0) {
+        v->formant = clampi((int)fv, -12, 12);
+    } else if (strcmp(key, "presence") == 0) {
+        v->presence = clampf(fv, 0.0f, 1.0f);
+    } else if (strcmp(key, "gate") == 0) {
+        v->gate = clampf(fv, 0.0f, 1.0f);
+    } else if (strcmp(key, "bright") == 0) {
+        v->bright = clampf(fv, 0.0f, 1.0f);
+    } else if (strcmp(key, "sibilance") == 0) {
+        v->sibilance = clampf(fv, 0.0f, 1.0f);
+    } else if (strcmp(key, "note_gate") == 0) {
+        v->note_gate = clampf(fv, 0.0f, 1.0f);
     }
 }
 
@@ -406,16 +529,32 @@ static int v2_get_param(void *instance, const char *key, char *buf, int buf_len)
         return snprintf(buf, buf_len, "%.2f", v->mix);
     if (strcmp(key, "carrier_mix") == 0)
         return snprintf(buf, buf_len, "%.2f", v->carrier_mix);
+    if (strcmp(key, "formant") == 0)
+        return snprintf(buf, buf_len, "%d", v->formant);
+    if (strcmp(key, "presence") == 0)
+        return snprintf(buf, buf_len, "%.2f", v->presence);
+    if (strcmp(key, "gate") == 0)
+        return snprintf(buf, buf_len, "%.2f", v->gate);
+    if (strcmp(key, "bright") == 0)
+        return snprintf(buf, buf_len, "%.2f", v->bright);
+    if (strcmp(key, "sibilance") == 0)
+        return snprintf(buf, buf_len, "%.2f", v->sibilance);
+    if (strcmp(key, "note_gate") == 0)
+        return snprintf(buf, buf_len, "%.2f", v->note_gate);
 
     /* Full state for patch save/restore */
     if (strcmp(key, "state") == 0) {
         return snprintf(buf, buf_len,
             "{\"bands\":%d,\"freq_low\":%.1f,\"freq_high\":%.1f,"
             "\"attack\":%.1f,\"release\":%.1f,\"mod_gain\":%.2f,"
-            "\"output_gain\":%.2f,\"mix\":%.2f,\"carrier_mix\":%.2f}",
+            "\"output_gain\":%.2f,\"mix\":%.2f,\"carrier_mix\":%.2f,"
+            "\"formant\":%d,\"presence\":%.2f,\"gate\":%.2f,"
+            "\"bright\":%.2f,\"sibilance\":%.2f,\"note_gate\":%.2f}",
             v->bands, v->freq_low, v->freq_high,
             v->attack_ms, v->release_ms, v->mod_gain,
-            v->output_gain, v->mix, v->carrier_mix);
+            v->output_gain, v->mix, v->carrier_mix,
+            v->formant, v->presence, v->gate,
+            v->bright, v->sibilance, v->note_gate);
     }
 
     /* Shadow UI hierarchy */
@@ -425,8 +564,8 @@ static int v2_get_param(void *instance, const char *key, char *buf, int buf_len)
             "\"levels\":{"
                 "\"root\":{"
                     "\"children\":null,"
-                    "\"knobs\":[\"mod_gain\",\"output_gain\",\"bands\",\"mix\",\"freq_low\",\"freq_high\",\"attack\",\"release\"],"
-                    "\"params\":[\"mod_gain\",\"output_gain\",\"bands\",\"mix\",\"freq_low\",\"freq_high\",\"attack\",\"release\",\"carrier_mix\"]"
+                    "\"knobs\":[\"sibilance\",\"presence\",\"output_gain\",\"bands\",\"gate\",\"bright\",\"formant\",\"mod_gain\"],"
+                    "\"params\":[\"sibilance\",\"presence\",\"gate\",\"bright\",\"formant\",\"note_gate\",\"mod_gain\",\"output_gain\",\"bands\",\"mix\",\"freq_low\",\"freq_high\",\"attack\",\"release\",\"carrier_mix\"]"
                 "}"
             "}"
         "}";
@@ -449,7 +588,13 @@ static int v2_get_param(void *instance, const char *key, char *buf, int buf_len)
             "{\"key\":\"mod_gain\",\"name\":\"Mod Gain\",\"type\":\"float\",\"min\":0,\"max\":6,\"default\":2,\"step\":0.1},"
             "{\"key\":\"output_gain\",\"name\":\"Out Gain\",\"type\":\"float\",\"min\":0,\"max\":6,\"default\":2,\"step\":0.1},"
             "{\"key\":\"mix\",\"name\":\"Mix\",\"type\":\"float\",\"min\":0,\"max\":1,\"default\":1,\"step\":0.01},"
-            "{\"key\":\"carrier_mix\",\"name\":\"Unvoiced\",\"type\":\"float\",\"min\":0,\"max\":1,\"default\":0.1,\"step\":0.01}"
+            "{\"key\":\"carrier_mix\",\"name\":\"Unvoiced\",\"type\":\"float\",\"min\":0,\"max\":1,\"default\":0.1,\"step\":0.01},"
+            "{\"key\":\"sibilance\",\"name\":\"Sibilance\",\"type\":\"float\",\"min\":0,\"max\":1,\"default\":0,\"step\":0.05},"
+            "{\"key\":\"presence\",\"name\":\"Presence\",\"type\":\"float\",\"min\":0,\"max\":1,\"default\":0,\"step\":0.05},"
+            "{\"key\":\"gate\",\"name\":\"Gate\",\"type\":\"float\",\"min\":0,\"max\":1,\"default\":0,\"step\":0.05},"
+            "{\"key\":\"bright\",\"name\":\"Bright\",\"type\":\"float\",\"min\":0,\"max\":1,\"default\":0,\"step\":0.05},"
+            "{\"key\":\"formant\",\"name\":\"Formant\",\"type\":\"int\",\"min\":-12,\"max\":12,\"default\":0,\"step\":1},"
+            "{\"key\":\"note_gate\",\"name\":\"Note Gate\",\"type\":\"float\",\"min\":0,\"max\":1,\"default\":0,\"step\":0.05}"
         "]";
         int len = strlen(params_json);
         if (len < buf_len) {
