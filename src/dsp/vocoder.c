@@ -95,6 +95,7 @@ typedef struct {
     float  band_q[MAX_BANDS];  /* SVF reciprocal-Q */
     float  att_coeff;          /* envelope attack */
     float  rel_coeff;          /* envelope release */
+    float  semis_per_band;     /* band spacing in semitones (log-spaced) */
 
     /* Derived one-pole coefficients for the new conditioning stages */
     float  pre_coef, sib_coef, bright_coef;
@@ -167,6 +168,11 @@ static void recalc_bands(vocoder_instance_t *v) {
     if (rel_ms < 0.1f) rel_ms = 0.1f;
     v->att_coeff = 1.0f - expf(-1.0f / (att_ms * 0.001f * (float)SAMPLE_RATE));
     v->rel_coeff = 1.0f - expf(-1.0f / (rel_ms * 0.001f * (float)SAMPLE_RATE));
+
+    /* Band spacing in semitones: log-spaced bands = constant interval */
+    v->semis_per_band = (n > 1)
+        ? 12.0f * log2f(v->freq_high / v->freq_low) / (float)(n - 1)
+        : 12.0f;
 
     /* Fixed one-pole corners for the conditioning stages (sample-rate only) */
     const float sr = (float)SAMPLE_RATE;
@@ -316,7 +322,9 @@ static void v2_process_block(void *instance, int16_t *audio_inout, int frames) {
     float wet = v->mix;
     float dry = 1.0f - wet;
     float noise_mix = v->carrier_mix;
-    int   formant   = v->formant;
+    /* Formant knob is in semitones; convert to a (fractional) band shift so
+     * the interval per step is constant regardless of band count */
+    float formant_shift = (float)v->formant / v->semis_per_band;
     float presence  = v->presence;
     float gate_amt  = v->gate;
     float bright    = v->bright;
@@ -392,11 +400,18 @@ static void v2_process_block(void *instance, int16_t *audio_inout, int frames) {
         for (int b = 0; b < n; b++) {
             float f = v->band_f[b];
             float q = v->band_q[b];
-            int src = clampi(b - formant, 0, n - 1);
+            float srcf = clampf((float)b - formant_shift, 0.0f, (float)(n - 1));
+            int   i0   = (int)srcf;
+            int   i1   = (i0 < n - 1) ? i0 + 1 : i0;
+            float fr   = srcf - (float)i0;
+            float env_l = v->mod_env_l[i0].level
+                        + fr * (v->mod_env_l[i1].level - v->mod_env_l[i0].level);
+            float env_r = v->mod_env_r[i0].level
+                        + fr * (v->mod_env_r[i1].level - v->mod_env_r[i0].level);
             float car_band_l = svf_bandpass(&v->car_svf_l[b], car_noise_l, f, q);
             float car_band_r = svf_bandpass(&v->car_svf_r[b], car_noise_r, f, q);
-            out_l += car_band_l * v->mod_env_l[src].level;
-            out_r += car_band_r * v->mod_env_r[src].level;
+            out_l += car_band_l * env_l;
+            out_r += car_band_r * env_r;
         }
 
         /* Scale output (more bands = more energy), apply output gain */
