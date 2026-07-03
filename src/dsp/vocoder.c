@@ -231,6 +231,15 @@ static inline int clampi(int x, int lo, int hi) {
     return x;
 }
 
+/* Flush a filter state that has decayed toward zero before it reaches the
+ * denormal range. The build links -Ofast into a shared object, which does
+ * NOT set FTZ/DAZ (no crtfastmath.o), so denormal handling depends on the
+ * host process; a conditional flush also can't be constant-folded away by
+ * -ffast-math the way an additive "+1e-20f-1e-20f" offset can. */
+static inline void flush_denorm(float *x) {
+    if (fabsf(*x) < 1.0e-15f) *x = 0.0f;
+}
+
 /* Snap band count to nearest valid value */
 static int snap_bands(int v) {
     if (v <= 12) return 8;
@@ -414,6 +423,22 @@ static void v2_process_block(void *instance, int16_t *audio_inout, int frames) {
 
         audio_inout[i * 2]     = (int16_t)(mix_l * 32767.0f);
         audio_inout[i * 2 + 1] = (int16_t)(mix_r * 32767.0f);
+    }
+
+    /* Once per block: keep exponentially-decaying states out of the denormal
+     * range so silent passages can't cause CPU spikes on the audio thread */
+    flush_denorm(&v->pre_lp_l);  flush_denorm(&v->pre_lp_r);
+    flush_denorm(&v->sib_lp_l);  flush_denorm(&v->sib_lp_r);
+    flush_denorm(&v->car_lp_l);  flush_denorm(&v->car_lp_r);
+    flush_denorm(&v->gate_env);  flush_denorm(&v->gate_gain);
+    flush_denorm(&v->car_level);
+    for (int b = 0; b < n; b++) {
+        flush_denorm(&v->mod_svf_l[b].low);  flush_denorm(&v->mod_svf_l[b].band);
+        flush_denorm(&v->mod_svf_r[b].low);  flush_denorm(&v->mod_svf_r[b].band);
+        flush_denorm(&v->car_svf_l[b].low);  flush_denorm(&v->car_svf_l[b].band);
+        flush_denorm(&v->car_svf_r[b].low);  flush_denorm(&v->car_svf_r[b].band);
+        flush_denorm(&v->mod_env_l[b].level);
+        flush_denorm(&v->mod_env_r[b].level);
     }
 }
 
