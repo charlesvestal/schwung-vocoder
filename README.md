@@ -31,7 +31,7 @@ default to off/neutral.
 | **Presence** | 0–1 | Pre-emphasises the voice's highs before analysis so consonants track better. |
 | **Sibilance** | 0–1 | Passes the voice's own high-frequency content through (natural "s/t/f"), instead of relying only on carrier noise. This is a direct mic→output path: with an open speaker + mic it can feed back, so raise it carefully and consider **Note Gate**. |
 | **Bright** | 0–1 | Lifts the carrier's highs so upper formants survive. |
-| **Formant** | −12…+12 | Shifts the spectral envelope up/down (robot ↔ chipmunk). Bands are log-spaced, so each step is a constant musical interval. |
+| **Formant** | −12…+12 st | Shifts the spectral envelope up/down by that many semitones (±1 octave), interpolated across bands — the interval per step is the same at any band count. |
 | **Gate** | 0–1 | Noise gate on the voice — silences room hiss/hum between words (0 = off). |
 | **Note Gate** | 0–1 | Mutes the unvoiced noise + sibilance when no carrier is present, so the effect is silent between notes (0 = off, preserves the always-on behaviour). |
 
