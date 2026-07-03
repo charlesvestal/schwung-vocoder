@@ -21,20 +21,21 @@ Core: **Bands** (8/16/24/32), **Low/High Freq** (filterbank range),
 **Attack/Release** (envelope tracking), **Mod Gain**, **Out Gain**, **Mix**
 (wet/dry), **Unvoiced** (`carrier_mix` — noise added to the carrier).
 
-Intelligibility / character controls. **Presence, Sibilance and Bright ship
-on** (tuned for clear vocals out of the box) — set them to 0 for the original
-"classic" character. The situational controls (Gate, Note Gate, Formant)
-default to neutral/off.
+Intelligibility / character controls. **Presence and Bright ship on** (tuned
+for clear vocals out of the box) — set them to 0 for the original "classic"
+character. The situational controls (Sibilance, Gate, Note Gate, Formant)
+default to off/neutral.
 
 | Param | Range | What it does |
 |-------|-------|--------------|
 | **Presence** | 0–1 | Pre-emphasises the voice's highs before analysis so consonants track better. |
-| **Sibilance** | 0–1 | Passes the voice's own high-frequency content through (natural "s/t/f"), instead of relying only on carrier noise. |
+| **Sibilance** | 0–1 | Passes the voice's own high-frequency content through (natural "s/t/f"), instead of relying only on carrier noise. This is a direct mic→output path: with an open speaker + mic it can feed back, so raise it carefully and consider **Note Gate**. |
 | **Bright** | 0–1 | Lifts the carrier's highs so upper formants survive. |
 | **Formant** | −12…+12 | Shifts the spectral envelope up/down (robot ↔ chipmunk). Bands are log-spaced, so each step is a constant musical interval. |
 | **Gate** | 0–1 | Noise gate on the voice — silences room hiss/hum between words (0 = off). |
 | **Note Gate** | 0–1 | Mutes the unvoiced noise + sibilance when no carrier is present, so the effect is silent between notes (0 = off, preserves the always-on behaviour). |
 
-**Defaults** are Presence 0.3, Sibilance 0.4, Bright 0.3, Bands 16 — a good
-clear-vocal starting point. From there, raise **Gate** until the background
+**Defaults** are Presence 0.3, Bright 0.3, Bands 16 — a good clear-vocal
+starting point. From there, raise **Sibilance** for natural "s/t/f" (watch
+levels on open speaker+mic setups), raise **Gate** until the background
 between words goes quiet, and try **Formant** for character.
