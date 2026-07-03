@@ -99,7 +99,8 @@ typedef struct {
 
     /* Derived one-pole coefficients for the new conditioning stages */
     float  pre_coef, sib_coef, bright_coef;
-    float  gate_env_coef, gate_atk_coef, gate_rel_coef, car_gate_coef;
+    float  fast_env_coef;      /* shared 5 ms follower (gate env/attack, carrier level) */
+    float  gate_rel_coef;      /* 80 ms gate release */
 
     /* Filter states (modulator + carrier, stereo) */
     svf_state_t mod_svf_l[MAX_BANDS];
@@ -179,10 +180,8 @@ static void recalc_bands(vocoder_instance_t *v) {
     v->pre_coef    = 1.0f - expf(-2.0f * (float)M_PI * 2000.0f / sr);  /* presence  */
     v->sib_coef    = 1.0f - expf(-2.0f * (float)M_PI * 4000.0f / sr);  /* sibilance HP */
     v->bright_coef = 1.0f - expf(-2.0f * (float)M_PI * 1500.0f / sr);  /* carrier brighten */
-    v->gate_env_coef = 1.0f - expf(-1.0f / (0.005f * sr));
-    v->gate_atk_coef = 1.0f - expf(-1.0f / (0.005f * sr));
+    v->fast_env_coef = 1.0f - expf(-1.0f / (0.005f * sr));
     v->gate_rel_coef = 1.0f - expf(-1.0f / (0.080f * sr));
-    v->car_gate_coef = 1.0f - expf(-1.0f / (0.005f * sr));
 }
 
 /* Clear all filter states */
@@ -343,9 +342,9 @@ static void v2_process_block(void *instance, int16_t *audio_inout, int frames) {
         /* Modulator noise gate: silence room hiss/hum between words */
         if (gate_amt > 0.0f) {
             float lvl = 0.5f * (fabsf(mod_l) + fabsf(mod_r));
-            v->gate_env += v->gate_env_coef * (lvl - v->gate_env);
+            v->gate_env += v->fast_env_coef * (lvl - v->gate_env);
             float tgt = (v->gate_env > gate_amt * 0.08f) ? 1.0f : 0.0f;
-            float gc = (tgt > v->gate_gain) ? v->gate_atk_coef : v->gate_rel_coef;
+            float gc = (tgt > v->gate_gain) ? v->fast_env_coef : v->gate_rel_coef;
             v->gate_gain += gc * (tgt - v->gate_gain);
             mod_l *= v->gate_gain;
             mod_r *= v->gate_gain;
@@ -364,7 +363,7 @@ static void v2_process_block(void *instance, int16_t *audio_inout, int frames) {
         float ngate = 1.0f;
         if (note_gate > 0.0f) {
             float cl = 0.5f * (fabsf(car_l) + fabsf(car_r));
-            v->car_level += v->car_gate_coef * (cl - v->car_level);
+            v->car_level += v->fast_env_coef * (cl - v->car_level);
             float cg = v->car_level * 4.0f;
             if (cg > 1.0f) cg = 1.0f;
             ngate = (1.0f - note_gate) + note_gate * cg;
