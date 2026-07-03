@@ -265,15 +265,16 @@ static void* v2_create_instance(const char *module_dir, const char *config_json)
     v->carrier_mix = 0.1f;
     v->noise_seed  = 12345;
 
-    /* Recommended defaults for clear vocals out of the box. The always-helpful
-     * controls (presence/sibilance/bright) are on; the situational ones
-     * (formant/gate/note_gate) stay neutral. Set presence/sibilance/bright to 0
+    /* Recommended defaults for clear vocals out of the box. Presence and
+     * bright are on (they only shape analysis/carrier); sibilance is opt-in
+     * because it feeds the mic's highs straight to the output — with an open
+     * speaker+mic that's an acoustic-feedback path. Set presence/bright to 0
      * for the original/classic character. */
     v->formant   = 0;
     v->presence  = 0.3f;
     v->gate      = 0.0f;
     v->bright    = 0.3f;
-    v->sibilance = 0.4f;
+    v->sibilance = 0.0f;
     v->note_gate = 0.0f;
     v->gate_gain = 1.0f;
 
@@ -399,8 +400,8 @@ static void v2_process_block(void *instance, int16_t *audio_inout, int frames) {
         if (sibilance > 0.0f) {
             v->sib_lp_l += v->sib_coef * (mod_l - v->sib_lp_l);
             v->sib_lp_r += v->sib_coef * (mod_r - v->sib_lp_r);
-            out_l += sibilance * ngate * (mod_l - v->sib_lp_l) * 2.0f;
-            out_r += sibilance * ngate * (mod_r - v->sib_lp_r) * 2.0f;
+            out_l += sibilance * ngate * (mod_l - v->sib_lp_l);
+            out_r += sibilance * ngate * (mod_r - v->sib_lp_r);
         }
 
         /* Wet/dry mix */
@@ -592,7 +593,7 @@ static int v2_get_param(void *instance, const char *key, char *buf, int buf_len)
             "{\"key\":\"output_gain\",\"name\":\"Out Gain\",\"type\":\"float\",\"min\":0,\"max\":6,\"default\":2,\"step\":0.1},"
             "{\"key\":\"mix\",\"name\":\"Mix\",\"type\":\"float\",\"min\":0,\"max\":1,\"default\":1,\"step\":0.01},"
             "{\"key\":\"carrier_mix\",\"name\":\"Unvoiced\",\"type\":\"float\",\"min\":0,\"max\":1,\"default\":0.1,\"step\":0.01},"
-            "{\"key\":\"sibilance\",\"name\":\"Sibilance\",\"type\":\"float\",\"min\":0,\"max\":1,\"default\":0.4,\"step\":0.05},"
+            "{\"key\":\"sibilance\",\"name\":\"Sibilance\",\"type\":\"float\",\"min\":0,\"max\":1,\"default\":0,\"step\":0.05},"
             "{\"key\":\"presence\",\"name\":\"Presence\",\"type\":\"float\",\"min\":0,\"max\":1,\"default\":0.3,\"step\":0.05},"
             "{\"key\":\"gate\",\"name\":\"Gate\",\"type\":\"float\",\"min\":0,\"max\":1,\"default\":0,\"step\":0.05},"
             "{\"key\":\"bright\",\"name\":\"Bright\",\"type\":\"float\",\"min\":0,\"max\":1,\"default\":0.3,\"step\":0.05},"
