@@ -442,12 +442,12 @@ static int v2_get_param(void *instance, const char *key, char *buf, int buf_len)
     if (strcmp(key, "chain_params") == 0) {
         const char *params_json = "["
             "{\"key\":\"bands\",\"name\":\"Bands\",\"type\":\"enum\",\"options\":[\"8\",\"16\",\"24\",\"32\"],\"default\":\"16\"},"
-            "{\"key\":\"freq_low\",\"name\":\"Low Freq\",\"type\":\"float\",\"min\":80,\"max\":500,\"default\":100,\"step\":10,\"unit\":\"Hz\"},"
-            "{\"key\":\"freq_high\",\"name\":\"High Freq\",\"type\":\"float\",\"min\":2000,\"max\":12000,\"default\":8000,\"step\":100,\"unit\":\"Hz\"},"
+            "{\"key\":\"freq_low\",\"short_name\":\"Low\",\"name\":\"Low Freq\",\"type\":\"float\",\"min\":80,\"max\":500,\"default\":100,\"step\":10,\"unit\":\"Hz\"},"
+            "{\"key\":\"freq_high\",\"short_name\":\"High\",\"name\":\"High Freq\",\"type\":\"float\",\"min\":2000,\"max\":12000,\"default\":8000,\"step\":100,\"unit\":\"Hz\"},"
             "{\"key\":\"attack\",\"name\":\"Attack\",\"type\":\"float\",\"min\":0.1,\"max\":50,\"default\":5,\"step\":0.5,\"unit\":\"ms\"},"
             "{\"key\":\"release\",\"name\":\"Release\",\"type\":\"float\",\"min\":5,\"max\":500,\"default\":50,\"step\":5,\"unit\":\"ms\"},"
-            "{\"key\":\"mod_gain\",\"name\":\"Mod Gain\",\"type\":\"float\",\"min\":0,\"max\":6,\"default\":2,\"step\":0.1},"
-            "{\"key\":\"output_gain\",\"name\":\"Out Gain\",\"type\":\"float\",\"min\":0,\"max\":6,\"default\":2,\"step\":0.1},"
+            "{\"key\":\"mod_gain\",\"short_name\":\"Gain\",\"name\":\"Mod Gain\",\"type\":\"float\",\"min\":0,\"max\":6,\"default\":2,\"step\":0.1},"
+            "{\"key\":\"output_gain\",\"short_name\":\"Out\",\"name\":\"Out Gain\",\"type\":\"float\",\"min\":0,\"max\":6,\"default\":2,\"step\":0.1},"
             "{\"key\":\"mix\",\"name\":\"Mix\",\"type\":\"float\",\"min\":0,\"max\":1,\"default\":1,\"step\":0.01},"
             "{\"key\":\"carrier_mix\",\"name\":\"Unvoiced\",\"type\":\"float\",\"min\":0,\"max\":1,\"default\":0.1,\"step\":0.01}"
         "]";
